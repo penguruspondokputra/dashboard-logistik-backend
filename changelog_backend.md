@@ -28,6 +28,168 @@ untuk sesuatu yang tidak sungguh dijalankan).
 
 ---
 
+## Perubahan untuk `environment.md`
+
+Penambahan baris berikut ke bagian 6:
+```
+- Untuk uji endpoint API dari PowerShell 5.1 yang mengirim body JSON
+  (POST/PATCH), prioritaskan `Invoke-RestMethod` dengan body yang
+  dibangun menggunakan `ConvertTo-Json`.
+- Untuk body JSON yang kompleks, boleh gunakan file JSON sementara lalu
+  kirim dengan `curl.exe --data-binary "@file.json"`.
+- Hindari memberikan JSON kompleks langsung sebagai string argument
+  `-d`/`--data` pada `curl.exe`, karena aturan quoting PowerShell dan
+  proses eksternal dapat menyebabkan body yang diterima server berbeda
+  dari JSON yang dimaksud.
+- Jangan menerjemahkan contoh command Linux ke PowerShell secara literal;
+  pilih metode pengujian yang sesuai dengan shell pada `environment.md`.
+```
+
+- Tanggal: 2026-08-21
+- Diverifikasi oleh: pengguna
+- Perubahan sejak verifikasi sebelumnya: Server sungguhan di-boot (bukan cuma baseline dari package.json/server.js), endpoint POST/GET /api/expense-items diuji langsung, migrasi db.js di atas data/dashboard.db yang sudah ada dikonfirmasi aman, dan akses LAN dari perangkat lain dikonfirmasi jalan.
+## 2026-08-21 — Fase 1, Sesi 3
+
+- [B-6] Port algoritma kalender Hijriah tabular (hijriToJD/gregorianToJD/
+  jdToHijri/jdToGregorian) dari Dashboard.html ke modul backend baru
+  (hijri.js), lalu populate tabel `hijri_months` (612 baris, 1440–1490 H)
+  sbg SATU sumber kebenaran dua arah (bulan→rentang tanggal DAN
+  tanggal→bulan) — prasyarat yg sebelumnya diblokir eksplisit di
+  db.js/keputusan_backend.md sblm endpoint expense_items bisa mendukung
+  filter periode Hijriah.
+- [B-7] Modul resolusi nama bahan (ingredients.js): raw_name →
+  ingredient_id, urutan cek sama dgn applyLibrary() lama (canonical_name
+  dulu, baru ingredient_variants, case-insensitive+trimmed), tapi nama
+  tak dikenal OTOMATIS jadi ingredient baru (bukan silent passthrough).
+- Endpoint baru: `POST /api/expense-items` (simpan, bulk, semua-atau-
+  tidak-sama-sekali per unggahan) & `GET /api/expense-items` (ambil per
+  program + periode — rentang Masehi from/to ATAU bulan Hijriah
+  hijri_year/hijri_month).
+
+- File/fungsi yang disentuh:
+  - BARU: `hijri.js` — HIJRI_EPOCH_JD, hijriToJD(), gregorianToJD(),
+    jdToHijri(), jdToGregorian(), gregorianToHijri(), hijriMonthRangeJD(),
+    toISODate()
+  - BARU: `ingredients.js` — makeIngredientResolver()
+  - Diubah: `db.js` — require('./hijri'); tambah HIJRI_SEED_YEAR_FROM/TO,
+    seedHijriMonths(); dipanggil di akhir file (menggantikan komentar
+    placeholder "[Sesi 3] SENGAJA belum ada di sini...")
+  - Diubah: `server.js` — require('./ingredients'); middleware
+    express.json({limit:'10mb'}); isValidDateStr(),
+    normalizeExpenseItem(); endpoint POST /api/expense-items; endpoint
+    GET /api/expense-items; middleware error-handler utk body JSON tak
+    valid
+  - Dikonfirmasi TIDAK berubah: `schema.sql` (tidak ada perubahan skema
+    sama sekali — seluruh tabel yg dipakai sudah didesain di sesi
+    arsitektur 2026-08-17)
+
+- Cara diuji:
+
+  - Sandbox AI (Node.js terpisah — salinan package.json/schema.sql +
+    db.js/server.js/hijri.js/ingredients.js versi baru, database
+    sementara, BUKAN data/dashboard.db institusi):
+    1. `npm install` lolos bersih (69 paket, 0 kerentanan).
+    2. hijri.js diuji berdiri sendiri: kalibrasi anchor
+       (hijriToJD(1447,1,1)→jdToGregorian = PERSIS 2025-06-27, cocok
+       dokumentasi epoch Dashboard.html); round-trip Gregorian↔Hijri;
+       kontinuitas SELURUH 612 bulan rentang seed (1440–1490H, 0 celah/
+       tumpang-tindih); panjang tiap bulan selalu 29/30 hari;
+       konsistensi 2-arah di 1224 titik (awal & akhir tiap bulan),
+       0 mismatch — properti yg langsung menutup bug [B-6].
+    3. db.js diuji lewat require sungguhan: fresh seed → 13 tabel +
+       612 baris hijri_months (rentang persis 1440–1490); idempotensi
+       lintas-proses (require ulang di proses Node BARU thd file DB
+       sama) → row count tetap, tidak dobel.
+    4. server.js diuji dgn server yg SUNGGUH di-boot (curl thd port
+       sungguhan): resolusi ingredient (nama baru/nama sama beda
+       kapital/varian manual/batch 50 baris 10 nama unik → tepat 10
+       ingredient); item tanpa info satuan tersimpan quantity/unit/
+       unit_price=null tapi total penuh; total auto-hitung dari
+       quantity×unit_price; quantity=0 tersimpan sbg 0 bukan null;
+       filter Masehi (from/to) & filter Hijriah (hijri_year/month) thd
+       2 bulan Hijriah bertetangga sungguhan menghasilkan SET ITEM
+       PERSIS SAMA; isolasi antar program dua arah; 7 skenario
+       validasi/error (program tak dikenal, items kosong, tanggal
+       invalid, total tak terhitung, raw_name kosong, batch campuran
+       DITOLAK SEMUA — dikonfirmasi via query DB langsung, JSON rusak);
+       FK enforcement langsung bypass API; regresi /api/ping &
+       /api/programs; persistensi lintas-restart proses; server.log
+       bersih dari stack trace sepanjang sesi.
+
+  - Environment institusi (Windows 11 Pro, PowerShell 5.1, Node v24.19.0
+    — lihat environment.md; dijalankan LANGSUNG oleh pengguna thd
+    data/dashboard.db yang SUDAH ADA & dipakai sejak Sesi 2, BUKAN
+    database kosong):
+    1. Patch diterapkan (`git apply`), `npm install`, `node server.js`
+       → server boot normal ("Server jalan di port 3000").
+    2. Regresi: `GET /api/ping` & `GET /api/programs` → 200 OK, isi
+       `programs` PERSIS SAMA dgn sebelum patch (created_at kedua baris
+       tidak berubah: 2026-08-18 00:40:51) — mengonfirmasi upgrade
+       skema tidak menyentuh/menduplikasi data yg sudah ada.
+    3. `hijri_months` setelah dijalankan di atas DB lama → 612 baris
+       tepat, sama seperti hasil sandbox.
+    4. `POST /api/expense-items` (program kamisan, 2 baris: 1 item
+       biasa + 1 item jasa/"Ongkos Kirim" hanya total) → berhasil,
+       `new_ingredients:2` (keduanya memang bahan pertama kali di DB
+       institusi). Percobaan pertama pakai `curl.exe` dgn JSON inline
+       gagal ("Body request bukan JSON yang valid") — BUKAN bug
+       server: root cause dikonfirmasi masalah PowerShell 5.1 merusak
+       tanda kutip ganda bersarang saat meneruskan argumen ke proses
+       eksternal. Diperbaiki pakai `Invoke-RestMethod` (native
+       PowerShell, body via `ConvertTo-Json`) → sukses. Lihat catatan
+       baru di environment.md.
+    5. `GET /api/expense-items?program=kamisan` → mengembalikan PERSIS
+       2 item yg baru disimpan, field lengkap & benar (item jasa:
+       quantity/unit/unit_price null, total tetap 25000).
+    6. Akses dari perangkat LAIN di LAN (browser HP/laptop lain via IP
+       lokal) → `{"ok":true,...}` tampil.
+
+  - Sengaja TIDAK diuji sesi ini (bukan kekurangan, tapi cakupan Fase 2
+    per roadmap_checklist.md, bukan Sesi 3): jalur "Excel diparse di
+    Dashboard.html lalu di-POST ke API ini" — jalur itu sendiri belum
+    ada, karena integrasi Dashboard.html↔API baru mulai di Fase 2
+    ("Ganti upload Excel manual → fetch dari API").
+
+- Catatan/kendala:
+  - Ditemukan (KONFIRMASI, bukan bug): konstanta HIJRI_ANCHOR di
+    Dashboard.html (komentar "1 Sya'ban 1447H = 25 Jan 2026") TIDAK
+    PERNAH dipakai kalkulasi apa pun di sana (dikonfirmasi lewat
+    pencarian pemakaian — hanya muncul di baris deklarasinya sendiri).
+    Port backend (pakai epoch HIJRI_EPOCH_JD yang SUNGGUH dipakai
+    Dashboard.html) menghasilkan 1 Sya'ban 1447H = 20 Jan 2026, selisih
+    5 hari dari komentar mati itu. Backend sengaja mengikuti epoch yang
+    aktif dipakai (sudah dikonfirmasi cocok persis dgn anchor Muharram:
+    27 Juni 2025) — bukan komentar HIJRI_ANCHOR yang tidak pernah
+    dieksekusi.
+  - Ditemukan selama pengujian institusi: `curl`/`curl.exe` di
+    PowerShell 5.1 tidak bisa diandalkan utk body JSON yang diketik
+    inline (tanda kutip ganda bersarang rusak saat diteruskan
+    PowerShell) — `Invoke-RestMethod` yang bekerja. Ditambahkan sbg
+    catatan di environment.md supaya sesi pengujian berikutnya tidak
+    mengulang troubleshooting yang sama.
+  - Rentang hijri_months (1440–1490 H, ≈2018–2068 M) — bisa diperluas
+    kapan saja tanpa migrasi (ubah HIJRI_SEED_YEAR_FROM/TO di db.js,
+    restart; INSERT OR IGNORE aman dijalankan ulang berkali-kali).
+  - Desain "semua-atau-tidak-sama-sekali" per unggahan POST (menolak
+    SELURUH batch kalau ada 1 baris invalid) — beda dari parser
+    client-side lama yang MELEWATI baris bermasalah secara diam-diam.
+    Keputusan baru yang diambil sesi ini krn belum ada keputusan
+    eksplisit sebelumnya; kandidat didiskusikan ulang kalau perilaku
+    "lewati baris bermasalah" ternyata lebih diinginkan.
+  - Belum ada pengecekan konsistensi kalau quantity/unit_price/total
+    dikirim BERSAMAAN tapi angkanya tidak nyambung (mis. quantity×
+    unit_price ≠ total) — saat ini total dipakai apa adanya selama
+    berupa angka valid, tidak dicocokkan silang. Dibahas di percakapan
+    sesi ini, belum diputuskan apakah perlu ditambah toleransi/validasi.
+  - Endpoint ini TIDAK mendeteksi/mencegah unggahan duplikat — sengaja
+    tidak diputuskan sepihak, blm ada keputusan eksplisit di
+    keputusan_backend.md; kandidat item terpisah.
+  - `program` diidentifikasi lewat slug (bukan program_id) di kedua
+    endpoint, konsisten dgn programs.slug sejak Sesi 2. Belum ada
+    konfirmasi ini cocok dgn rencana integrasi Fase 2 yang sesungguhnya.
+  - DELETE/PATCH utk expense_items (mis. koreksi salah unggah) sengaja
+    di luar cakupan — item roadmap hanya minta "simpan & ambil".
+
 ## 2026-08-17 — Fase 1 (arsitektur & skema — BUKAN Sesi 3)
 
 - [B-1 s/d B-15] Diskusi arsitektur backend menyeluruh (mencocokkan fitur

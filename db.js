@@ -14,6 +14,7 @@
 const fs = require('fs');
 const path = require('path');
 const Database = require('better-sqlite3');
+const { hijriMonthRangeJD, jdToGregorian, toISODate } = require('./hijri');
 
 const DATA_DIR = path.join(__dirname, 'data');
 const DB_PATH = process.env.DB_PATH || path.join(DATA_DIR, 'dashboard.db');
@@ -83,17 +84,47 @@ function seedDefaultAppSettings() {
   insertAll(Object.entries(DEFAULT_APP_SETTINGS));
 }
 
-// [Sesi 3] SENGAJA belum ada di sini: seed/populate `hijri_months`.
-// Butuh porting algoritma tabular Hijriah (hijriToJD dkk dari Dashboard.html)
-// jadi modul JS tersendiri, dan rentang tahun yg wajar (~30-50 tahun) —
-// pekerjaan sesi berikutnya, bukan seed 1-baris spt tabel lain di atas.
-// Tanpa data ini, endpoint yang butuh pengelompokan periode (expense_items
-// per minggu/bulan Hijriah) belum bisa jalan — itu memang lingkup Sesi 3
-// LANJUTAN (endpoint expense_items), bukan sesi skema ini.
+// [Sesi 3 — B-6] Populate `hijri_months`: SATU sumber kebenaran dipakai
+// utk kedua arah (bulan→rentang tanggal & tanggal→bulan) — lihat komentar
+// panjang di hijri.js & schema.sql. Rentang ~50 tahun (bukan 1 baris spt
+// seed lain di atas): institusi ini diharapkan berjalan bertahun-tahun,
+// dan hitungannya murah (612 baris, sekali per start, INSERT OR IGNORE).
+// is_override selalu 0 dari seed ini — override ru'yah sungguhan (lewat
+// UI Konfigurasi Kalender, belum disambungkan ke backend di sesi ini)
+// akan jadi baris yang SUDAH ADA saat seed berikutnya jalan, sehingga
+// tidak pernah tertimpa balik ke tabular (PRIMARY KEY (hijri_year,
+// hijri_month) + INSERT OR IGNORE menjamin ini).
+const HIJRI_SEED_YEAR_FROM = 1440; // ≈ 2018-2019 M — buffer secukupnya ke belakang
+const HIJRI_SEED_YEAR_TO = 1490;   // ≈ 2067-2068 M — puluhan tahun ke depan
+
+function seedHijriMonths() {
+  const insert = db.prepare(`
+    INSERT OR IGNORE INTO hijri_months (hijri_year, hijri_month, gregorian_start, gregorian_end, is_override)
+    VALUES (@hijri_year, @hijri_month, @gregorian_start, @gregorian_end, 0)
+  `);
+  const insertAll = db.transaction((rows) => {
+    for (const row of rows) insert.run(row);
+  });
+
+  const rows = [];
+  for (let y = HIJRI_SEED_YEAR_FROM; y <= HIJRI_SEED_YEAR_TO; y++) {
+    for (let m = 1; m <= 12; m++) {
+      const { startJD, endJD } = hijriMonthRangeJD(y, m);
+      rows.push({
+        hijri_year: y,
+        hijri_month: m,
+        gregorian_start: toISODate(jdToGregorian(startJD)),
+        gregorian_end: toISODate(jdToGregorian(endJD)),
+      });
+    }
+  }
+  insertAll(rows);
+}
 
 applySchema();
 seedDefaultPrograms();
 seedDefaultCategories();
 seedDefaultAppSettings();
+seedHijriMonths();
 
 module.exports = db;
