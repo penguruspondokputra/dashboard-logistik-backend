@@ -15,7 +15,7 @@ Dibuat 12 Agustus 2026. Checklist ini yang di-update tiap kali ada progres.
       data). Kolom `programs.file_type` sengaja tidak diberi CHECK constraint —
       Fase 4 mungkin bawa format baru utk 9 program lain yang belum ditentukan.
 - [x] Sesi 3: Endpoint `expense_items` (simpan & ambil per program/periode)
-- [ ] Sesi 4: Endpoint `targets` + migrasi `targetsHistory` lama dari localStorage
+- [x] Sesi 4: Endpoint `targets` + migrasi `targetsHistory` lama dari localStorage
 - [ ] Sesi 5: Deploy ke komputer institusi, tes akses local network
 
 ## Fase 2 — Sambungkan Dashboard
