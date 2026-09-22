@@ -70,9 +70,16 @@ Informasi di sini menjadi acuan untuk:
   dari JSON yang dimaksud.
 - Jangan menerjemahkan contoh command Linux ke PowerShell secara literal;
   pilih metode pengujian yang sesuai dengan shell pada `environment.md`.
+- Saat menampilkan hasil GET (array JSON) lewat `ConvertTo-Json` di
+  PowerShell 5.1, bungkus `Invoke-RestMethod` dengan tanda kurung
+  sebelum di-pipe: `(Invoke-RestMethod ...) | ConvertTo-Json -Depth 5`.
+  Tanpa tanda kurung, PowerShell 5.1 punya bug lama (diperbaiki di
+  PowerShell 6+) yang membungkus array jadi `{"value":[...],"Count":N}`
+  alih-alih array JSON biasa `[...]`. Ini murni tampilan ulang di sisi
+  client — respons asli dari server tetap array biasa.
 
 ## 7. Last Verified
 
-- Tanggal: 2026-08-21
+- Tanggal: 2026-09-22
 - Diverifikasi oleh: pengguna
-- Perubahan sejak verifikasi sebelumnya: Dokumen environment dibuat dan baseline backend diverifikasi dari package.json serta server.js.
+- Perubahan sejak verifikasi sebelumnya: Menambahkan catatan untuk pengujian body JSON sejak `endpoint_targets`

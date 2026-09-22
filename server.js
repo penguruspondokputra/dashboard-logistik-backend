@@ -1,6 +1,7 @@
 const express = require('express');
 const db = require('./db');
 const { makeIngredientResolver } = require('./ingredients');
+const targets = require('./targets');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -226,6 +227,108 @@ app.get('/api/expense-items', (req, res) => {
 
   const rows = db.prepare(sql).all(...params);
   res.json(rows);
+});
+
+// [Sesi 4] Nilai target yang BERLAKU per program pada suatu tanggal
+// (default hari ini). Tidak mengarang default — program tanpa satu pun
+// baris di program_targets mengembalikan value:null apa adanya (lihat
+// keputusan terbuka #1 di changelog_backend.md Sesi 4).
+// ?program=<slug>  — filter ke satu program (404 kalau slug tak dikenal)
+// ?date=YYYY-MM-DD — hitung nilai yang berlaku pada tanggal itu, bukan hari ini
+app.get('/api/targets', (req, res) => {
+  const { program, date } = req.query;
+  if (date !== undefined && !targets.isValidDateStr(date)) {
+    return res.status(400).json({ error: 'Query "date" wajib format YYYY-MM-DD.' });
+  }
+  const asOf = date || targets.todayLocalISODate();
+
+  let programRows;
+  if (program !== undefined) {
+    const p = targets.getProgramBySlug(program);
+    if (!p) return res.status(404).json({ error: `Program dengan slug "${program}" tidak ditemukan.` });
+    programRows = [p];
+  } else {
+    programRows = targets.getAllPrograms();
+  }
+
+  const result = programRows.map((p) => {
+    const cur = targets.getCurrentValue(p.id, asOf);
+    return {
+      program: p.slug,
+      program_name: p.name,
+      as_of: asOf,
+      value: cur ? cur.value : null,
+      effective_from: cur ? cur.effective_from : null,
+    };
+  });
+  res.json(result);
+});
+
+// [Sesi 4] Riwayat lengkap target per program, terurut kronologis.
+// ?program=<slug> — filter ke satu program (404 kalau slug tak dikenal)
+app.get('/api/targets/history', (req, res) => {
+  const { program } = req.query;
+  let programRows;
+  if (program !== undefined) {
+    const p = targets.getProgramBySlug(program);
+    if (!p) return res.status(404).json({ error: `Program dengan slug "${program}" tidak ditemukan.` });
+    programRows = [p];
+  } else {
+    programRows = targets.getAllPrograms();
+  }
+  const result = programRows.map((p) => ({
+    program: p.slug,
+    program_name: p.name,
+    entries: targets.getHistory(p.id),
+  }));
+  res.json(result);
+});
+
+// [Sesi 4] Tambah satu entri target baru utk satu program — pengganti
+// saveTarget()/saveTargets() lama. Body: { program, value, effective_from? }
+// effective_from opsional, default hari ini (LOKAL, lihat todayLocalISODate()).
+// Entri baru DILEWATI (bukan error) kalau value sama dgn entri paling
+// baru dimasukkan utk program itu — meniru perilaku saveTargets() lama
+// yang tidak menumpuk baris kalau angkanya tidak berubah.
+app.post('/api/targets', (req, res) => {
+  const { program, value, effective_from } = req.body || {};
+
+  if (typeof program !== 'string' || !program.trim()) {
+    return res.status(400).json({ error: 'Field "program" wajib diisi.' });
+  }
+  const p = targets.getProgramBySlug(program.trim());
+  if (!p) return res.status(404).json({ error: `Program dengan slug "${program}" tidak ditemukan.` });
+
+  if (typeof value !== 'number' || !isFinite(value) || value < 0) {
+    return res.status(400).json({ error: 'Field "value" wajib angka >= 0.' });
+  }
+
+  let ef = effective_from;
+  if (ef === undefined || ef === null) {
+    ef = targets.todayLocalISODate();
+  } else if (!targets.isValidDateStr(ef)) {
+    return res.status(400).json({ error: 'Field "effective_from" wajib format YYYY-MM-DD.' });
+  }
+
+  const result = targets.addEntry({ programId: p.id, value, effectiveFrom: ef, setBy: null });
+  res.status(result.inserted ? 201 : 200).json({ program: p.slug, ...result });
+});
+
+// [Sesi 4] Migrasi SEKALI JALAN dari localStorage lama (key
+// 'dashboardBelanja_targets') ke program_targets. Body: PERSIS hasil
+// JSON.parse(localStorage.getItem('dashboardBelanja_targets')), yaitu
+// { mingguan: [...]|number, vendor: [...]|number } atau {} (kosong).
+// All-or-nothing: satu entri tidak valid di manapun → SELURUH body
+// ditolak, tidak ada baris yang tersimpan (lihat validateImportPayload
+// di targets.js). TIDAK dideduplikasi thd data yg sudah ada — lihat
+// catatan di targets.js.
+app.post('/api/targets/import', (req, res) => {
+  try {
+    const summary = targets.importHistory(req.body);
+    res.status(201).json({ imported: summary });
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ error: err.message });
+  }
 });
 
 // [Sesi 3] Body JSON tidak valid (mis. koma nyasar) → balas 400 JSON yang
